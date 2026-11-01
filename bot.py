@@ -53,6 +53,17 @@ def log_conversation(chat_id: int, role: str, text: str, name: str = ""):
         f.write(f"[{timestamp}] [{chat_id}]{name_str} {role}: {text}\n")
 
 
+# Глобальный HTTP-клиент (создаётся при запуске, закрывается при остановке)
+http_client: httpx.AsyncClient = None
+
+
+async def get_http_client() -> httpx.AsyncClient:
+    global http_client
+    if http_client is None or http_client.is_closed:
+        http_client = httpx.AsyncClient(timeout=30.0)
+    return http_client
+
+
 chat_history = {}
 last_message_time = {}
 last_activity_time = {}
@@ -83,14 +94,14 @@ async def ask_groq(user_id: int, user_message: str) -> str:
     messages += history
     messages.append({"role": "user", "content": user_message})
 
+    client = await get_http_client()
     for attempt in range(3):
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    GROQ_URL,
-                    headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-                    json={"model": GROQ_MODEL, "messages": messages, "temperature": 0.7, "max_tokens": 1024},
-                )
+            response = await client.post(
+                GROQ_URL,
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+                json={"model": GROQ_MODEL, "messages": messages, "temperature": 0.7, "max_tokens": 1024},
+            )
             if response.status_code == 200:
                 data = response.json()
                 answer = data["choices"][0]["message"]["content"]
@@ -121,9 +132,9 @@ async def ask_groq(user_id: int, user_message: str) -> str:
 
 
 async def send_message(chat_id: int, text: str) -> dict:
-    async with httpx.AsyncClient() as client:
-        r = await client.post(f"{TG_API}/sendMessage", json={"chat_id": chat_id, "text": text})
-        return r.json()
+    client = await get_http_client()
+    r = await client.post(f"{TG_API}/sendMessage", json={"chat_id": chat_id, "text": text})
+    return r.json()
 
 
 async def process_update(update: dict):
@@ -251,32 +262,34 @@ async def main():
         while not _shutdown:
             await asyncio.sleep(1)
         await runner.cleanup()
+        if http_client and not http_client.is_closed:
+            await http_client.aclose()
         log.info("Shutdown complete.")
     else:
-        if WEBHOOK_URL and not HAS_AIOHTTP:
-            log.warning("aiohttp not available, falling back to polling mode")
-        async with httpx.AsyncClient() as client:
-            await client.post(f"{TG_API}/deleteWebhook")
+        client = await get_http_client()
+        await client.post(f"{TG_API}/deleteWebhook")
         log.info("Bot started in polling mode")
         offset = 0
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            while not _shutdown:
-                try:
-                    resp = await client.get(
-                        f"{TG_API}/getUpdates",
-                        params={"offset": offset, "timeout": 5},
-                    )
-                    data = resp.json()
-                    if not data.get("ok"):
-                        log.error(f"TG error: {data}")
-                        await asyncio.sleep(5)
-                        continue
-                    for update in data.get("result", []):
-                        offset = update["update_id"] + 1
-                        await process_update(update)
-                except Exception as e:
-                    log.error(f"Polling error: {e}")
+        while not _shutdown:
+            try:
+                client = await get_http_client()
+                resp = await client.get(
+                    f"{TG_API}/getUpdates",
+                    params={"offset": offset, "timeout": 5},
+                )
+                data = resp.json()
+                if not data.get("ok"):
+                    log.error(f"TG error: {data}")
                     await asyncio.sleep(5)
+                    continue
+                for update in data.get("result", []):
+                    offset = update["update_id"] + 1
+                    await process_update(update)
+            except Exception as e:
+                log.error(f"Polling error: {e}")
+                await asyncio.sleep(5)
+        if http_client and not http_client.is_closed:
+            await http_client.aclose()
         log.info("Shutdown complete.")
 
 
