@@ -6,7 +6,12 @@ import logging
 import signal
 import time
 from datetime import datetime
-from aiohttp import web
+try:
+    from aiohttp import web
+    HAS_AIOHTTP = True
+except ImportError:
+    HAS_AIOHTTP = False
+    web = None
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -185,23 +190,26 @@ async def process_update(update: dict):
         await send_message(OWNER_CHAT_ID, f"Крупный заказ!\nКлиент: {client_name}{username_str} (ID {chat_id})\nСообщение: {text}\nОтвет бота: {answer}\n\nОтветить: /reply {chat_id} текст")
 
 
-async def webhook_handler(request: web.Request) -> web.Response:
-    try:
-        data = await request.json()
-        await process_update(data)
-    except Exception as e:
-        log.error(f"Webhook error: {e}")
-    return web.Response(status=200)
+if HAS_AIOHTTP:
+    async def webhook_handler(request: web.Request) -> web.Response:
+        try:
+            data = await request.json()
+            await process_update(data)
+        except Exception as e:
+            log.error(f"Webhook error: {e}")
+        return web.Response(status=200)
 
+    async def health_handler(request: web.Request) -> web.Response:
+        return web.Response(text="OK", status=200)
 
-async def health_handler(request: web.Request) -> web.Response:
-    return web.Response(text="OK", status=200)
-
-
-app = web.Application()
-app.router.add_post("/webhook", webhook_handler)
-app.router.add_get("/health", health_handler)
-app.router.add_get("/", health_handler)
+    app = web.Application()
+    app.router.add_post("/webhook", webhook_handler)
+    app.router.add_get("/health", health_handler)
+    app.router.add_get("/", health_handler)
+else:
+    app = None
+    webhook_handler = None
+    health_handler = None
 
 
 async def setup_webhook():
@@ -231,7 +239,7 @@ async def main():
     except Exception:
         pass
 
-    if WEBHOOK_URL:
+    if WEBHOOK_URL and HAS_AIOHTTP:
         await setup_webhook()
         runner = web.AppRunner(app)
         await runner.setup()
@@ -243,9 +251,11 @@ async def main():
         await runner.cleanup()
         log.info("Shutdown complete.")
     else:
+        if WEBHOOK_URL and not HAS_AIOHTTP:
+            log.warning("aiohttp not available, falling back to polling mode")
         async with httpx.AsyncClient() as client:
             await client.post(f"{TG_API}/deleteWebhook")
-        log.info("Bot started in polling mode (local testing)")
+        log.info("Bot started in polling mode")
         offset = 0
         async with httpx.AsyncClient(timeout=30.0) as client:
             while not _shutdown:
