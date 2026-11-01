@@ -46,10 +46,11 @@ def get_system_prompt() -> str:
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "conversations.log")
 
 
-def log_conversation(chat_id: int, role: str, text: str):
+def log_conversation(chat_id: int, role: str, text: str, name: str = ""):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    name_str = f" ({name})" if name else ""
     with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(f"[{timestamp}] [{chat_id}] {role}: {text}\n")
+        f.write(f"[{timestamp}] [{chat_id}]{name_str} {role}: {text}\n")
 
 
 chat_history = {}
@@ -134,7 +135,8 @@ async def process_update(update: dict):
     text = msg["text"]
     user = msg.get("from", {})
 
-    log_conversation(chat_id, "КЛИЕНТ", text)
+    client_name = user.get("first_name", "")
+    log_conversation(chat_id, "КЛИЕНТ", text, client_name)
 
     if not check_rate_limit(chat_id):
         await send_message(chat_id, "Пожалуйста, не спешите — я обрабатываю ваш прошлый запрос.")
