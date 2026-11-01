@@ -28,7 +28,7 @@ PORT = int(os.getenv("PORT", "8080"))
 MAX_HISTORY_MESSAGES = 10
 CONTEXT_TIMEOUT = 7200
 RATE_LIMIT_SECONDS = 1.0
-TRIGGER_WORDS = ["оплата", "оплатить", "купить", "договор", "карта", "жалоба", "реквизиты", "счёт", "счет"]
+TRIGGER_WORDS = ["оплата", "оплатить", "скидка", "купить", "договор", "карта", "жалоба", "реквизиты", "счёт", "счет"]
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("mayker_bot")
