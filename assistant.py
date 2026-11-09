@@ -32,11 +32,16 @@ HUMAN = re.compile(r'(?:позов|приглас|соедин|свяж|нуже
                    r'(?:менеджер|руководител|человек|алексе)', re.I)
 DISCOUNT_CLAIM = re.compile(r'скидк', re.I)
 AUTHORITY_CLAIM = re.compile(r'обещ|соглас|одобр|разреш|алексе|руководител|главн', re.I)
+PORTFOLIO = re.compile(
+    r'портфолио|пример\w*\s+(?:ваших\s+)?работ|ваши\s+работы|'
+    r'(?:где\s+(?:можно\s+)?посмотреть|покаж\w*)\s+(?:ваши\s+)?примеры', re.I)
 
 
-def _product_lines(include_materials=False):
+def _product_lines(include_materials=False, tshirts_only=False):
     lines = []
     for item in CATALOG['products'].values():
+        if tshirts_only and not item['name'].casefold().startswith('футболк'):
+            continue
         price = f"{money(Decimal(item['price']))} ₽/шт." if item['price'] else 'цена по запросу'
         line = f"- {item['name']}: {price}"
         if include_materials:
@@ -192,7 +197,8 @@ class Assistant:
             return Decision('Уточните, пожалуйста: нужен расчёт заказа, информация об изделиях или помощь менеджера?', order=current)
         if action == 'faq':
             # Asking about another product is not an order modification.
-            answer = render_faq(parsed.get('topic'), candidate)
+            topic = 'portfolio' if PORTFOLIO.search(text) else parsed.get('topic')
+            answer = render_faq(topic, candidate)
             if answer is None:
                 return self.handoff({}, 'unknown_topic')
             return Decision(answer, order=current)
@@ -205,8 +211,15 @@ class Assistant:
                 questions.append('сколько изделий нужно')
             if 'own_textile' not in current:
                 questions.append('текстиль ваш или из нашего каталога')
-            if current.get('own_textile') is False and 'product' not in current:
-                questions.append('какое изделие из каталога выбираете')
+            user_texts = [text] + [m['content'] for m in history[-10:]
+                                  if isinstance(m, dict) and m.get('role') == 'user'
+                                  and isinstance(m.get('content'), str)]
+            tshirt_requested = any(re.search(r'\bфутб\w*', value, re.I) for value in user_texts)
+            if (current.get('own_textile') is not True and 'product' not in current
+                    and (current.get('own_textile') is False or tshirt_requested)):
+                label = 'модель футболки' if tshirt_requested else 'изделие из каталога'
+                questions.append('выберите ' + label + ' (цены без печати):\n'
+                                 + _product_lines(tshirts_only=tshirt_requested))
             if 'print_size' not in current:
                 questions.append('какой формат печати: А6, А5, А4 или А3')
             return Decision('Для расчёта уточните, пожалуйста:\n' + '\n'.join('- ' + item + ';' for item in questions), order=current)
